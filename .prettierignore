@@ -1,0 +1,14 @@
+# directories
+node_modules/
+dist/
+build/
+coverage/
+.next
+.vercel
+
+# logs
+*-error.log
+
+# misc
+.eslintcache
+*-lock.yaml

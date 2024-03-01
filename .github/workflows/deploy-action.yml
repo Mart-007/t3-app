@@ -1,0 +1,128 @@
+name: 'Deploy App Workflow'
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      branch:
+        required: true
+        type: string
+    secrets:
+      app_env:
+        required: true
+      vercel_token:
+        required: true
+      org_id:
+        required: true
+      project_id:
+        required: true
+
+jobs:
+  deploy-app:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.vercel_deploy.outputs.VERCEL_URL }}
+    concurrency:
+      cancel-in-progress: true
+      group: ${{ inputs.environment }}
+    env:
+      VERCEL_ORG_ID: ${{ secrets.org_id }}
+      VERCEL_PROJECT_ID: ${{ secrets.project_id }}
+      VERCEL_DOMAIN: t3-stack-app.vercel.app
+    steps:
+      - name: Checkout ${{ inputs.branch }} branch
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.branch }}
+
+      - uses: pnpm/action-setup@v2.0.1
+        with:
+          version: 7.0.1
+
+      - uses: actions/setup-node@v2
+        with:
+          node-version: 16.15.0
+          cache: 'pnpm'
+
+      - name: Set node environment variables
+        run: echo ${{ secrets.app_env }} | openssl base64 -d -A -out .env
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy to Vercel
+        id: vercel_deploy
+        run: |
+          environment=""
+          prod_flag=""
+          vercel_url=""
+
+          # set vercel_url based on environment
+          if [[ "${{ inputs.environment }}" == "dev" ]]
+          then
+            vercel_url="develop-$VERCEL_DOMAIN"
+          elif [[ "${{ inputs.environment }}" == "staging" ]]
+          then
+            vercel_url="staging-$VERCEL_DOMAIN"
+          elif [[ "${{ inputs.environment }}" == "production" ]]
+          then
+            vercel_url="$VERCEL_DOMAIN"
+            environment="--environment=production"
+            prod_flag="--prod"
+          fi
+
+          # pull request deploy preview
+          if [[ "${{ github.event_name }}" == "pull_request" ]] && [[ "${{ github.base_ref }}" == "develop" ]]
+          then
+            vercel_url="develop-${{ github.event.pull_request.number }}-$VERCEL_DOMAIN"
+            environment="--environment=preview"
+
+            # set PR deploy preview url
+            echo "PR_PREVIEW_URL=https://${vercel_url}" >> $GITHUB_OUTPUT
+          fi
+
+          # show derived parameters
+          echo environment: $environment
+          echo prod_flag: $prod_flag
+          echo vercel_url: $vercel_url
+
+          # start vercel deployment
+
+          pnpm vercel --token=${{ secrets.vercel_token }} pull --yes $environment
+
+          # on project setup, override the following
+          # - build command in vercel with `next build --no-lint` to disable linting or `pnpm build`
+          # - install command as empty to disable installation in vercel build command
+          pnpm vercel --token=${{ secrets.vercel_token }} build $prod_flag
+
+          pnpm vercel --token=${{ secrets.vercel_token }} deploy --prebuilt $prod_flag > domain.txt
+
+          # use --scope=$VERCEL_TEAM_ID if you're using vercel teams
+          if [[ "${{ inputs.environment }}" != "production" ]]
+          then
+            pnpm vercel --token=${{ secrets.vercel_token }} alias set `cat domain.txt` $vercel_url
+          fi
+
+          # set vercel preview url as job output url
+          if [[ "${{ github.event_name }}" != "pull_request" ]]
+          then
+            echo Set Environment URL
+            echo "VERCEL_URL=https://${vercel_url}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment deploy preview URL
+        uses: thollander/actions-comment-pull-request@v2
+        if: |
+          github.event_name == 'pull_request' &&
+          github.base_ref == 'develop'
+        with:
+          message: |
+            :white_check_mark: Preview
+            ${{ steps.vercel_deploy.outputs.PR_PREVIEW_URL }}
+
+            Built with commit ${{ github.event.pull_request.head.sha }}.
+          comment_tag: execution
+          pr_number: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

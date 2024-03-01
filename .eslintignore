@@ -1,0 +1,25 @@
+# directories
+node_modules/
+dist/
+build/
+public/
+coverage/
+
+# config
+jest.*.ts
+*.config.js
+*.config.ts
+*.config.mjs
+*.config.cjs
+src/env/**
+
+# env
+.env
+
+# logs
+*-error.log
+
+# misc
+*.html
+.eslintcache
+.vscode
